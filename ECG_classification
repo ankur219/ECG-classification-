@@ -1,0 +1,83 @@
+#Python code to normalize and segment each PQRST wave from an ECG signal
+
+import numpy as np
+import wfdb
+import biosppy
+from wfdb import processing
+from scipy import stats
+from keras.models import Sequential
+from keras.layers import Dense, Activation, Flatten, Convolution1D, Dropout, MaxPooling1D
+from keras.optimizers import SGD
+
+#Preparing dataset
+record_list = (wfdb.get_record_list('ptbdb'))
+MI = []
+Normal = []
+for i in record_list:
+    signals, fields = wfdb.rdsamp('/home/ankur219/database/ptbdb/'+i,channels =[1])
+
+    if fields['comments'][4][-5:] == 'ction':
+        MI.append(signals)
+    elif fields['comments'][4][22:26] == 'Heal':
+        Normal.append(signals)
+
+
+#Segmenting MI signals
+segmented_MI = []
+for i in MI:
+    signals = i
+    locs = biosppy.signals.ecg.christov_segmenter(signal=signals[:,0], sampling_rate=1000.0)[0]
+
+    for i, j in enumerate(locs[:-1]):
+        x, y = (locs[i+1]-250, locs[i+1]+400)
+        segmented_MI.append(stats.zscore(signals[x:y]))
+
+#segmenting Normal signals
+segmented_Normal = []
+for i in Normal:
+    signals = i
+    locs = biosppy.signals.ecg.christov_segmenter(signal=signals[:,0], sampling_rate=1000.0)[0]
+
+    for i, j in enumerate(locs[1:-1]):
+        x, y = (locs[i+1]-250, locs[i+1]+400)
+        segmented_Normal.append(stats.zscore(signals[x:y]))
+
+X = segmented_MI + segmented_Normal
+X = np.array(X)
+Y = [1 for i in range(51189)] + [0 for i in range(10475)]
+Y = np.array(Y)
+
+X = X.reshape(61664, 650)
+Y = Y.reshape(61664,1)
+
+dataset = np.append(X, Y, axis = 1)
+data = dataset.copy()
+np.random.shuffle(data)
+X_train = data[:, :650]
+Y_train = data[:, 650]
+
+
+
+
+#CNN architecture
+model = Sequential()
+model.add(Convolution1D(16, 102, input_shape = (650,1), padding = 'same', activation = 'relu' ))
+model.add(MaxPooling1D(pool_size = 2, strides = 2))
+model.add(Convolution1D(32, 24, activation = 'relu'))
+model.add(MaxPooling1D(pool_size = 2, strides = 2))
+model.add(Dropout(0.2))
+model.add(Convolution1D(32, 11, activation = 'relu'))
+model.add(MaxPooling1D(pool_size = 2, strides = 2))
+model.add(Dropout(0.2))
+model.add(Convolution1D(64, 9, activation = 'relu'))
+model.add(MaxPooling1D(pool_size = 2, strides = 2))
+model.add(Dropout(0.2))
+model.add(Flatten())
+mode.add(Dense(30, kernel_initializer = 'normal', activation = 'relu'))
+model.add(Dropout(0.2))
+mode.add(Dense(10, kernel_initializer = 'normal', activation = 'relu'))
+model.add(Dropout(0.2))
+mode.add(Dense(1, kernel_initializer = 'normal', activation = 'sigmoid'))
+sgd = SGD(lr=0.7, momentum = 0.0003)
+model.compile(loss='binary_crossentropy', optimizer=sgd, metrics=['accuracy'])
+model.fit(X_train.reshape(61664, 650, 1), Y_train, validation_data = (), epochs=60, batch_size=10)
