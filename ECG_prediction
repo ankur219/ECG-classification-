@@ -1,0 +1,49 @@
+#preparing vios data for testing
+import pandas as pd
+import scipy
+import numpy as np
+import wfdb
+import biosppy
+from wfdb import processing
+from scipy import stats
+from keras.models import Sequential
+from keras.layers import Dense, Activation, Flatten, Convolution1D, Dropout, MaxPooling1D
+from keras.optimizers import SGD
+from keras.models import load_model
+import tensorflow as tf
+gpu_options = tf.GPUOptions(allow_growth=True)
+session = tf.InteractiveSession(config=tf.ConfigProto(gpu_options=gpu_options))
+
+model = load_model('/home/ankur/Downloads/ecg.h5')
+
+vios_data = pd.read_csv('/home/ankur/Downloads/vios_data.csv')
+sig = vios_data[' Sample Value']
+
+def segmentation(signal, sampling_rate):
+    signal = np.array(signal)
+    resampled = scipy.signal.resample(signal, len(signal)*5)
+    peaks = biosppy.signals.ecg.christov_segmenter(signal=resampled, sampling_rate=1000.0)[0]
+    segmented_vios = []
+    for i, j in enumerate(peaks[1:-1]):
+        x, y = (peaks[i+1]-250, peaks[i+1]+400)
+        segmented_vios.append(stats.zscore(resampled[x:y]))
+
+    return segmented_vios
+
+def prediction(signal, sampling_rate):
+    segmented_signal = segmentation(signal, sampling_rate)
+    count_MI = 0
+    count_Normal = 0
+    for i in segmented_signal:
+        if (model.predict_classes(np.array(i).reshape(1,650,1))) == 1:
+            count_MI = count_MI+1
+        elif (model.predict_classes(np.array(i).reshape(1,650,1))) == 0:
+            count_Normal = count_Normal + 1
+
+    result = max(count_Normal, count_MI)
+    if result == count_MI:
+        print("The patient has MI")
+    elif result == count_Normal:
+        print("The patient is Healthy")
+
+prediction(sig, 200)
